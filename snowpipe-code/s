@@ -1,1 +1,135 @@
-s
+USE ROLE ACCOUNTADMIN;
+CREATE WAREHOUSE IF NOT EXISTS MYWAREHOUSE
+WITH WAREHOUSE_SIZE = 'XSMALL'
+AUTO_SUSPEND = 60
+AUTO_RESUME = TRUE;
+
+USE WAREHOUSE MYWAREHOUSE;
+
+CREATE DATABASE IF NOT EXISTS atliq_db;
+
+USE DATABASE atliq_db;
+
+CREATE SCHEMA IF NOT EXISTS my_schema;
+
+USE SCHEMA my_schema;
+
+
+
+CREATE OR REPLACE TABLE DATE_TABLE(
+    "date" DATE,
+    fiscal_year INT,
+    quarter VARCHAR(10)
+);
+
+
+CREATE OR REPLACE TABLE sales_by_makers(
+    "date" DATE,
+    state VARCHAR(100),
+    vehicle_category VARCHAR(50),
+    total_vehicles_sold INT,
+    electric_vehicles_sold INT
+);
+
+
+CREATE OR REPLACE TABLE sales_by_state(
+    "date" DATE,
+    vehicle_category VARCHAR(50),
+    maker VARCHAR(100),
+    electric_vehicles_sold INT
+);
+
+
+
+CREATE OR REPLACE STORAGE INTEGRATION atliq_s3_integration
+TYPE = EXTERNAL_STAGE
+STORAGE_PROVIDER = S3
+ENABLED = TRUE
+STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::212541130490:role/snowpiperole'
+STORAGE_ALLOWED_LOCATIONS = (
+    's3://cleaned-atliq-data/date_cleaned_file/',
+    's3://cleaned-atliq-data/electric_vehicle_sales_by_makers_cleaned/',
+    's3://cleaned-atliq-data/ electric_vehicle_sales_by_state_cleaned/'
+);
+
+
+DESC INTEGRATION atliq_s3_integration;
+
+
+CREATE OR REPLACE FILE FORMAT myparquetdata
+TYPE = PARQUET;
+
+
+CREATE OR REPLACE STAGE date_stage
+STORAGE_INTEGRATION = atliq_s3_integration
+URL = 's3://cleaned-atliq-data/date_cleaned_file/'
+FILE_FORMAT = myparquetdata;
+
+
+CREATE OR REPLACE STAGE makers_stage
+STORAGE_INTEGRATION = atliq_s3_integration
+URL = 's3://cleaned-atliq-data/ electric_vehicle_sales_by_state_cleaned/'
+FILE_FORMAT = myparquetdata;
+
+
+CREATE OR REPLACE STAGE state_stage
+STORAGE_INTEGRATION = atliq_s3_integration
+URL = 's3://cleaned-atliq-data/electric_vehicle_sales_by_makers_cleaned/'
+FILE_FORMAT = myparquetdata;
+
+
+LIST @date_stage;
+
+LIST @makers_stage;
+
+LIST @state_stage;
+
+
+CREATE OR REPLACE PIPE date_pipe
+AUTO_INGEST = TRUE AS
+COPY INTO DATE_TABLE
+FROM (
+    SELECT
+        $1:date::DATE,
+        $1:fiscal_year::INTEGER,
+        $1:quarter::STRING
+    FROM @date_stage
+);
+
+CREATE OR REPLACE PIPE makers_pipe
+AUTO_INGEST = TRUE AS
+COPY INTO sales_by_makers
+FROM (
+    SELECT
+        $1:date::DATE,
+        $1:state::STRING,
+        $1:vehicle_category::STRING,
+        $1:total_vehicles_sold::INTEGER,
+        $1:electric_vehicles_sold::INTEGER
+    FROM @makers_stage
+);
+
+
+CREATE OR REPLACE PIPE state_pipe
+AUTO_INGEST = TRUE AS
+COPY INTO sales_by_state
+FROM (
+    SELECT
+        $1:date::DATE,
+        $1:vehicle_category::STRING,
+        $1:maker::STRING,
+        $1:electric_vehicles_sold::INTEGER
+    FROM @state_stage
+);
+
+
+
+SELECT SYSTEM$PIPE_STATUS('date_pipe');
+
+SELECT SYSTEM$PIPE_STATUS('makers_pipe');
+
+SELECT SYSTEM$PIPE_STATUS('state_pipe');
+
+
+SHOW PIPES;
+
